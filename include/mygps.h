@@ -8,6 +8,7 @@
 #include <M5Stack.h>
 #endif
 #ifdef M5ATOM
+#define FASTLED_INTERNAL 1 // for FASTLED library
 #include "M5Atom.h"
 #include "FS.h"
 #include <SD.h>
