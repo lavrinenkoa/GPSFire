@@ -18,8 +18,6 @@
 /*                        WiFiClientSecure                                              */
 /*                        Wire                                                          */
 /****************************************************************************************/
-
-#include <M5Stack.h>
 #include <TinyGPS++.h>
 #include <ArduinoJson.h>
 
@@ -27,8 +25,6 @@
 #include "mygps.h"
 #include "wifipoint.h"
 #include "GPX.h"
-
-//#include <esp_now.h>
 
 #define CFG_FILE_TXT       "/config.txt"
 #define GPS_STAUS_NO_SAT   ( 0  )  // No GPS receiver detected
@@ -44,6 +40,9 @@
 #define GPS_VALUE_NOT_VALID_LOCATION ( 0b00010000 )
 #define GPS_VALUE_FILTERED           ( 0b00100000 )
 
+#ifdef M5ATOM
+CRGB led(0, 0, 0);
+#endif
 
 const char *cfgFileName = CFG_FILE_TXT;
 ConfigParam config;                                           // <- global configuration object
@@ -56,7 +55,6 @@ GPX gpxTrack;
 char gpxTrackFileName[20];
 int gpxTrackFileStartPause = 5; // ~ sec  pause before gpx file started
 boolean gpx_file_started=false;
-
 
 TaskHandle_t Task0GPS;
 TaskHandle_t Task1HTTP;
@@ -75,23 +73,62 @@ void GPXFileSaveTrack(String gpx_point);
 /****************************************************************************************/
 /* Init routine                                                                         */
 /****************************************************************************************/
+
+
+int SDCardInit()
+{
+#ifdef M5STACK
+    // Fire
+    // SD file create
+    dbg("Initializing SD card...");
+    if (!SD.begin()) {
+      dbg("FAILED!\n");
+      return -1;
+    }
+    dbg("OK\n");
+#endif
+
+#ifdef M5ATOM
+    dbg("Initializing SD card...");
+    SPI.begin(23,33,19,-1);
+    if(!SD.begin(-1, SPI, 40000000)){
+      dbg("initialization failed!");
+      return -1;
+    } 
+    sdcard_type_t Type = SD.cardType();
+
+	dbg("SDCard Type = %d \r\n",Type);
+	dbg("SDCard Size = %d \r\n" , (int)(SD.cardSize()/1024/1024));
+
+    dbg("OK\n");
+    FastLED.setBrightness(10);
+    led = CRGB(255,0,255);
+    M5.dis.drawpix(0, led);
+#endif
+
+    return 0;
+}
+
 void setup()
 {
+#ifdef M5STACK
     M5.begin();                                    // Start M5 functions
     GPSRaw.begin(9600);                            // Init GPS serial interface
     //M5.Lcd.setBrightness(LCD_BRIGHTNESS - 200);    // Set initial LCD brightness
+#endif
+
+#ifdef M5ATOM
+    M5.begin(true,false,true); 
+    GPSRaw.begin(9600,SERIAL_8N1,22,-1);           // Init GPS serial interface 
+#endif
+
     delay(2000);                                   // 2000ms init delay
     gpx_file_started = false;
 
     dbg("Running...\n");
 
-    // SD file create
-    dbg("Initializing SD card...");
-    if (!SD.begin()) {
-      dbg("FAILED!\n");
-      return;
-    }
-    dbg("OK\n");
+    if (SDCardInit())
+        return;
 
     loadConfiguration(cfgFileName, config);
 
@@ -163,9 +200,9 @@ void TaskHTTP( void * pvParameters )
 /****************************************************************************************/
 void loop()
 {
-//    Serial.print("Loop running on core ");
-//    Serial.println(xPortGetCoreID());
-    delay(1000);
+    // Serial.print("Loop running on core ");
+    // Serial.println(xPortGetCoreID());
+    // delay(1000);
     vTaskDelay(1);
 //    vTaskDelay(portMAX_DELAY);
 //    vTaskDelete(NULL);
@@ -361,6 +398,21 @@ int isGPSValuesValid()
     if ( !gps.hdop.isValid()       or gps.hdop.hdop() >= 20)      valid |= GPS_VALUE_NOT_VALID_HDOP;
     if ( !gps.date.isValid()       or gps.date.year() < 2020)     valid |= GPS_VALUE_NOT_VALID_DATE;
     if ( !gps.location.isValid()   or gps.location.rawLat().deg==0 or gps.location.rawLat().billionths==0) valid |= GPS_VALUE_NOT_VALID_LOCATION;
+    
+ #ifdef M5ATOM   
+    if (valid == GPS_VALUE_VALID)
+    {
+        // Green
+        led = CRGB(255,0,0);
+        M5.dis.drawpix(0, led);
+    }
+    else
+    {
+        // Red
+        led = CRGB(0,255,0);
+        M5.dis.drawpix(0, led);       
+    }
+ #endif   
     return valid;
 }
 
@@ -413,7 +465,7 @@ void GPXFileInit()
                gpxTrack.getInfo() +
                gpxTrack.getTrakSegOpen();
     Serial.print(gpx_head);
-    M5.Lcd.println(gpx_head);
+    // LCD M5.Lcd.println(gpx_head);
 
     sprintf(gpxTrackFileName, "/%02d-%02d-%02d.gpx", gps.date.year(), gps.date.month(), gps.date.day());
     if (SD.exists(gpxTrackFileName) == false)

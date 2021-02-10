@@ -1,9 +1,11 @@
-#include <M5Stack.h>
+#include "mygps.h"
 
 #define DBG_FILE_TXT       "/debug.txt"
 #define LCD_MAX_LOG_LINE   ( 20 )
 
+#ifdef M5STACK
 int lcdLine=0;
+#endif
 
 void dbg(const char* format, ...)
 {
@@ -14,6 +16,7 @@ void dbg(const char* format, ...)
     vsprintf(tmp, format, argptr);
     va_end(argptr);
 
+#ifdef M5STACK
     if ( lcdLine%LCD_MAX_LOG_LINE == 0 )
     {
         M5.Lcd.clear();
@@ -21,8 +24,9 @@ void dbg(const char* format, ...)
     }
     lcdLine++;
 
-    Serial.printf(tmp);
     M5.Lcd.printf(tmp);
+#endif
+    Serial.printf(tmp);
     logFile = SD.open(DBG_FILE_TXT, "a+");
     logFile.printf(tmp);
     logFile.flush();
@@ -36,15 +40,16 @@ void dbg_serial(const char* format, ...)
     va_start(argptr, format);
     vsprintf(tmp, format, argptr);
     va_end(argptr);
+    Serial.printf(tmp);
 
+#ifdef M5STACK
     if ( lcdLine%LCD_MAX_LOG_LINE == 0 )
     {
         M5.Lcd.clear();
         M5.Lcd.setCursor(0, 0);
     }
     lcdLine++;
-
-    Serial.printf(tmp);
+#endif
 }
 
 

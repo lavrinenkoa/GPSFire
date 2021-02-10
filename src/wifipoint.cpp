@@ -1,4 +1,5 @@
-#include <M5Stack.h>
+#include "mygps.h"
+
 #include <DNSServer.h>
 #include <WiFi.h>
 #include "dbg.h"
@@ -8,7 +9,7 @@
 //------------------- Wi-Fi Server --------------------
 // Access Point credentials
 const char *ssid = "LVR-GPS";
-const char *password ="q123456789";
+const char *password ="123456789";
 const char *server_name = "mygps.com";
 
 DNSServer dnsServer;
