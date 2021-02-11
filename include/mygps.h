@@ -16,9 +16,19 @@
 CRGB HSVtoRGB(uint16_t h, uint16_t s, uint16_t v);
 #endif
 
+#define CONF_STR_LEN ( 64 )
+
 struct ConfigParam {
-  char hostname[64];
-  int port;
+  int dbg;
+  int sd_start_timeout;
+  char wifi_ap_name[CONF_STR_LEN];
+  char wifi_ap_password[CONF_STR_LEN];
+  char wifi_server_dns[CONF_STR_LEN];
+
+  char GPX_meta_desc[CONF_STR_LEN];
+  char GPX_track_name[CONF_STR_LEN];
+  char GPX_track_description[CONF_STR_LEN];
+  char GPX_src[CONF_STR_LEN];
 };
 
 #endif
