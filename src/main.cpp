@@ -20,11 +20,15 @@
 /****************************************************************************************/
 #include <TinyGPS++.h>
 #include <ArduinoJson.h>
+#include <map>
+#include <string>
 
 #include "dbg.h"
 #include "mygps.h"
-#include "wifipoint.h"
 #include "GPX.h"
+#include "colorled.h"
+#include "wifipoint.h"
+#include "passwd.h"
 
 #define CFG_FILE_TXT       "/config.txt"
 #define GPS_STAUS_NO_SAT   ( 0  )  // No GPS receiver detected
@@ -40,15 +44,18 @@
 #define GPS_VALUE_NOT_VALID_LOCATION ( 0b00010000 )
 #define GPS_VALUE_FILTERED           ( 0b00100000 )
 
-#ifdef M5ATOM
-CRGB led(0, 0, 0);
-#endif
-
 const char *cfgFileName = CFG_FILE_TXT;
 ConfigParam config;                                           // <- global configuration object
 
 TinyGPSPlus gps;                                              // Reference the TinyGPS++ object
 HardwareSerial GPSRaw(2);                                     // By default, GPS is connected with M5Core through UART2
+
+#ifdef GPSFIRE
+// #include <Adafruit_NeoPixel.h>
+// #define M5STACK_FIRE_NEO_NUM_LEDS 10
+// #define M5STACK_FIRE_NEO_DATA_PIN 15
+// Adafruit_NeoPixel pixels = Adafruit_NeoPixel(M5STACK_FIRE_NEO_NUM_LEDS, M5STACK_FIRE_NEO_DATA_PIN, NEO_GRB + NEO_KHZ800);
+#endif
 
 // GPX track file
 GPX gpxTrack;
@@ -59,9 +66,11 @@ boolean gpx_file_started=false;
 
 TaskHandle_t Task0GPS;
 TaskHandle_t Task1HTTP;
+TaskHandle_t Task1WifiClient;
 
-void TaskGPS( void * pvParameters );
 void loadConfiguration(const char *filename, ConfigParam &config);
+void TaskGPS( void * pvParameters );
+void TaskWifiClient( void * pvParameters );
 void TaskHTTP( void * pvParameters );
 void gpsProcessing();
 void gpsLogValues(); 
@@ -102,20 +111,125 @@ int SDCardInit()
 	dbg("SDCard Size = %d \r\n" , (int)(SD.cardSize()/1024/1024));
 
     dbg("OK\n");
-    FastLED.setBrightness(10);
-    led = CRGB(255,0,255);
-    M5.dis.drawpix(0, led);
+    FastLED.setBrightness(1);
+    white();
 #endif
 
     return 0;
 }
 
+int syncMailAndSDFiles()
+{
+    int ret=-1;
+    int i=0;
+    std::map <String, int> sd_tracks;
+    std::map <String, int> csv_tracks;
+    std::map <String, int> to_mail_tracks;
+    std::map <String, int> :: iterator it = sd_tracks.begin();
+    std::map <String, int> :: iterator sd;
+    std::map <String, int> :: iterator csv;
+
+    File csv_file;
+    String file_name;
+    String file_size;
+
+    // Get SD *.gpx file list.
+    File dir = SD.open("/");
+    dbg("-------------------------\n");
+    dbg("SD file list:\n");
+    while (true)
+    {
+        File entry = dir.openNextFile();
+        if (!entry)
+            break; // no more files
+        if (strstr(entry.name(), ".gpx") == NULL)
+        {
+            entry.close();
+            continue;
+        }
+        dbg("%d %s %d\n", ++i, entry.name(), entry.size());
+        // if (entry.isDirectory())
+        sd_tracks[entry.name()] = entry.size();
+        entry.close();
+    }
+    dbg("-------------------------\n");
+
+    // Read  CSV file with previus sync results
+    csv_file  = SD.open("/sync.csv", FILE_READ);
+    if (csv_file)
+    {
+        dbg("-------------------------\n");
+        dbg("CSV file list:\n"); i=0;
+        while (csv_file.available()) {
+            file_name = csv_file.readStringUntil(',');
+            file_size = csv_file.readStringUntil('\n');
+            dbg("%d %s %d\n", ++i, file_name.c_str(), file_size.toInt());
+            csv_tracks[file_name] = file_size.toInt();
+        }
+        csv_file.close();
+        dbg("-------------------------\n");
+    }
+    else
+    {
+        dbg("Error: can not open file to read: sync.csv\n");
+    }
+
+    // Check unsynchronized files and send emails
+    String sd_file;
+    int    sd_size;
+    it = sd_tracks.begin();
+    for (int i = 0; it != sd_tracks.end(); it++, i++) {
+        dbg("%d %s %d\n", i, it->first.c_str(), it->second);
+        sd_file = it->first;
+        sd_size = it->second;
+
+        csv = csv_tracks.find(sd_file);
+        if (csv == csv_tracks.end())   // file not found in csv list, send email
+        {
+            to_mail_tracks[sd_file] = sd_size;
+            dbg("Send email with %s %d\n", sd_file.c_str(), sd_size);
+            ret = sendEmail(sd_file);
+            if (ret==0) csv_tracks[sd_file] = sd_size;
+        }
+        else
+        {
+            if (sd_size != csv->second) // file size updated, send email
+            {
+                to_mail_tracks[sd_file] = sd_size;
+                dbg("Send email with %s %d. size updated\n", sd_file.c_str(), sd_size);
+                ret = sendEmail(sd_file);
+                if (ret==0) csv_tracks[sd_file] = sd_size;
+            }
+            else
+            {
+                // add to csv
+                csv_tracks[sd_file] = sd_size;
+                dbg("Add file %s %d to CSV\n", sd_file.c_str(), sd_size);
+            }
+        }
+    }
+
+    // Update CSV file
+    dbg("Update sync.csv\n");
+    csv_file  = SD.open("/sync.csv", FILE_WRITE);
+    it = csv_tracks.begin();
+    for (int i = 0; it != csv_tracks.end(); it++, i++) {
+        dbg("%d %s %d\n", i, it->first.c_str(), it->second);
+        // file_name, size
+        csv_file.printf("%s, %d\n", it->first.c_str(), it->second);
+    }
+    csv_file.close();
+
+    return ret;
+}
+
 void setup()
 {
-#ifdef M5STACK
+#ifdef GPSFIRE
     M5.begin();                                    // Start M5 functions
     GPSRaw.begin(9600);                            // Init GPS serial interface
     //M5.Lcd.setBrightness(LCD_BRIGHTNESS - 200);    // Set initial LCD brightness
+    // pixels.begin();
 #endif
 
 #ifdef M5ATOM
@@ -133,8 +247,11 @@ void setup()
 
     loadConfiguration(cfgFileName, config);
 
-    initWifiServer();
-    initHTTPServer();
+    if ( config.wifi_mode == CONF_WIFI_AP )
+    {
+        initWifiServer();
+        initHTTPServer();
+    }
 
     xTaskCreatePinnedToCore(
                       TaskGPS,     // Task function.
@@ -146,21 +263,39 @@ void setup()
                       0);          // pin task to core 0
 
     delay(100);
-    xTaskCreatePinnedToCore(
-                      TaskHTTP,    // Task function.
-                      "HTTP",      // name of task.
-                      50*1024,     // Stack size of task
-                      NULL,        // parameter of the task
-                      1,           // priority of the task
-                      &Task1HTTP,  // Task handle to keep track of created task
-                      1);          // pin task to core 1
-      delay(100);
+
+    if ( config.wifi_mode == CONF_WIFI_AP )
+    {
+        xTaskCreatePinnedToCore(
+                        TaskHTTP,    // Task function.
+                        "HTTP",      // name of task.
+                        50*1024,     // Stack size of task
+                        NULL,        // parameter of the task
+                        1,           // priority of the task
+                        &Task1HTTP,  // Task handle to keep track of created task
+                        1);          // pin task to core 1
+        delay(100);
+    }
+    else if ( config.wifi_mode == CONF_WIFI_CLIENT )
+    {
+        xTaskCreatePinnedToCore(
+                        TaskWifiClient,    // Task function.
+                        "Wifi",      // name of task.
+                        50*1024,     // Stack size of task
+                        NULL,        // parameter of the task
+                        1,           // priority of the task
+                        &Task1WifiClient,  // Task handle to keep track of created task
+                        1);          // pin task to core 1
+        delay(100);
+    }
 
       disableCore0WDT();
 }
 
 void TaskGPS( void * pvParameters )
 {
+    // while(1) sleep(5);
+    delay(1000);
     while(1)
     {
         // Serial.print("Task0GPS running on core ");
@@ -178,7 +313,6 @@ void TaskGPS( void * pvParameters )
             {
                 gps.encode(GPSRaw.read());  // GPS read()
                 read_loop++;
-                // Add botton req
                 yield();
             }
             yield();
@@ -196,6 +330,44 @@ void TaskHTTP( void * pvParameters )
         loopHTTP();
     }
 }
+
+void TaskWifiClient( void * pvParameters )
+{
+    int ret=-1;
+    // while(1) sleep(5);
+    while(1)
+    {
+        // Serial.print("Task2 running on core ");
+        // Serial.println(xPortGetCoreID());
+        yield();
+        //loopHTTP();
+#ifdef GPSATOM
+        M5.Btn.read();
+        if (M5.Btn.wasPressed())
+#else
+        M5.BtnB.read();
+        if (M5.BtnB.wasPressed())
+#endif
+        {
+            blue_on();
+            ret = initWifiClient(config.wifi_ssid, config.wifi_ssid_password);
+            if (ret!=CLIENT_WIFI_CONNECTED)
+            {
+                ret = initWifiClient(HOME_SSID, HOME_SSID_PASS);
+                if (ret!=CLIENT_WIFI_CONNECTED)
+                    continue;
+            }
+            ret = syncMailAndSDFiles();
+            blue_off();
+            if (ret == 0)
+                white();
+            else
+                red();
+        }
+        delay(50);
+    }
+}
+
 /****************************************************************************************/
 /* Main routine                                                                         */
 /****************************************************************************************/
@@ -269,9 +441,13 @@ void loadConfiguration(const char *filename, ConfigParam &config)
 
     config.dbg =              doc["dbg"]              | 1;
     config.sd_start_timeout = doc["sd_start_timeout"] | 5;
+    config.wifi_mode =        doc["wifi_mode"] | CONF_WIFI_CLIENT;
     strlcpy(config.wifi_ap_name,         doc["wifi_ap_name"]     | "GPS",       sizeof(config.wifi_ap_name));
     strlcpy(config.wifi_ap_password,     doc["wifi_ap_password"] | "123456789", sizeof(config.wifi_ap_password));
     strlcpy(config.wifi_server_dns,      doc["wifi_server_dns"]  | "gps.com",   sizeof(config.wifi_server_dns));
+
+    strlcpy(config.wifi_ssid,            doc["wifi_ssid"]        | "TLC",       sizeof(config.wifi_ssid));
+    strlcpy(config.wifi_ssid_password, doc["wifi_ssid_password"] | "123456789", sizeof(config.wifi_ssid_password));
 
     strlcpy(config.GPX_meta_desc,        doc["GPX_meta_desc"]    | "LVR Auto track", sizeof(config.GPX_meta_desc));
     strlcpy(config.GPX_src,              doc["GPX_src"]          | "GPSFire",        sizeof(config.GPX_src));
@@ -285,6 +461,10 @@ void loadConfiguration(const char *filename, ConfigParam &config)
     dbg("wifi_ap_name = %s\n",     config.wifi_ap_name);
     dbg("wifi_ap_password = %s\n", config.wifi_ap_password);
     dbg("wifi_server_dns = %s\n",  config.wifi_server_dns);
+
+    dbg("wifi_ssid = %s\n",          config.wifi_ssid);
+    dbg("wifi_ssid_password = %s\n", config.wifi_ssid_password);
+
     dbg("GPX_meta_desc = %s\n",    config.GPX_meta_desc);
     dbg("GPX_src = %s\n",          config.GPX_src);
     dbg("GPX_track_name = %s\n",   config.GPX_track_name);
@@ -406,20 +586,11 @@ int isGPSValuesValid()
     if ( !gps.date.isValid()       or gps.date.year() < 2020)     valid |= GPS_VALUE_NOT_VALID_DATE;
     if ( !gps.location.isValid()   or gps.location.rawLat().deg==0 or gps.location.rawLat().billionths==0) valid |= GPS_VALUE_NOT_VALID_LOCATION;
     
- #ifdef M5ATOM   
     if (valid == GPS_VALUE_VALID)
-    {
-        // Green
-        led = CRGB(255,0,0);
-        M5.dis.drawpix(0, led);
-    }
+        green();
     else
-    {
-        // Red
-        led = CRGB(0,255,0);
-        M5.dis.drawpix(0, led);       
-    }
- #endif   
+        red();
+  
     return valid;
 }
 
@@ -451,7 +622,7 @@ void GPXFileInit()
 
     if (gps.date.year()<=2019)
     {
-        dbg("GPS date not ready. Waiting correct date...\n");
+        dbg("GPS date not ready. Waiting correct time...\n");
         return;
     }
 
@@ -461,7 +632,7 @@ void GPXFileInit()
         return;
     }
 
-    sprintf(gpxTrackFileName, "%02d-%02d-%02d",      gps.date.year(), gps.date.month(), gps.date.day());
+    sprintf(gpxTrackName,     "%02d-%02d-%02d",      gps.date.year(), gps.date.month(), gps.date.day());
     sprintf(gpxTrackFileName, "/%02d-%02d-%02d.gpx", gps.date.year(), gps.date.month(), gps.date.day());
 
     gpxTrack.setMetaDesc(config.GPX_meta_desc);

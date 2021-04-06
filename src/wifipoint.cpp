@@ -1,10 +1,20 @@
 #include "mygps.h"
-
 #include <DNSServer.h>
 #include <WiFi.h>
+#include <ESP_Mail_Client.h>
+
 #include "dbg.h"
+#include "wifipoint.h"
+#include "colorled.h"
 
 #define FILE_BUFF_SIZE     ( 1024 )
+
+extern char gpxTrackName[20];
+//------------------- Email sender --------------------
+SMTPSession smtp;
+#include "passwd.h"
+void smtpCallback(SMTP_Status status);  //  Callback function to get the Email sending status
+
 
 //------------------- Wi-Fi Server --------------------
 extern ConfigParam config;   // Access Point credentials
@@ -12,7 +22,7 @@ extern ConfigParam config;   // Access Point credentials
 DNSServer dnsServer;
 WiFiServer server(80);
 WiFiClient client;
-
+int client_wifi_status;
 
 void initWifiServer()
 {
@@ -36,6 +46,187 @@ void initWifiServer()
 }
 
 
+int initWifiClient(String ssid, String password)
+{
+  int n=0;
+
+  dbg("Connect to WiFi %s\n", config.wifi_ssid);
+  WiFi.begin(ssid.c_str(), password.c_str());
+  while (1)
+  {
+    if (WiFi.status() == WL_CONNECTED)
+    {
+      client_wifi_status = CLIENT_WIFI_CONNECTED;
+      dbg("\n");
+      dbg("Connection established\n");  
+      dbg("IP address:\t %s\n", WiFi.localIP().toString().c_str());
+      break;
+    }
+    blue_off();
+    delay(500);
+    blue_on();
+    dbg(".");
+    ++n;
+    if (n>10){
+      client_wifi_status = CLIENT_WIFI_CONNECTED_TIMEOUT;
+      dbg("\n");
+      dbg("Connection timeout. Wi-fi disabled.");
+      blue_off();
+      break;
+    }
+  }
+
+  return client_wifi_status;
+}
+
+void disconnectWifiClient()
+{
+  WiFi.disconnect();
+  client_wifi_status = CLIENT_WIFI_DISCONNECTED;
+  dbg("Wi-fi disabled.");
+}
+
+// https://github.com/mobizt/ESP-Mail-Client/blob/master/examples/Send_Attachment_File/Send_Attachment_File.ino
+int sendEmail(String file_attachment)
+{
+  int ret=-1;
+  int nmax = 20;
+
+  // ESP_Mail_Client mclient;
+  // mclient.sdBegin();
+  int sdret = MailClient.sdBegin();
+  dbg("Email SD init %d\n", sdret);
+
+  // Enable the debug via Serial port
+  // none debug or 0
+  // basic debug or 1
+  smtp.debug(1);
+  smtp.callback(smtpCallback);   // Set the callback function to get the sending results
+  ESP_Mail_Session session;      // Declare the session config data
+
+  // Set the session config
+  session.server.host_name = SMTP_HOST;
+  session.server.port = SMTP_PORT;
+  session.login.email = AUTHOR_EMAIL;
+  session.login.password = AUTHOR_PASSWORD;
+  session.login.user_domain = "mydomain.net";
+  session.secure.startTLS = true;
+  // session.secure.cert_file;              ToDo
+  // The OAuth2.0 access token to log in
+  // session.login.accessToken = "";
+  
+  SMTP_Message message;
+
+  // Set the message headers
+  char messageText[40] = {0};
+  char subjectText[40] = {0};
+  sprintf(subjectText, "GPS Track %s", file_attachment.c_str()+1);
+  sprintf(messageText, "GPS Track %s attached.", file_attachment.c_str()+1);
+  message.sender.name =  "ESP GPSAtom";
+  message.sender.email = AUTHOR_EMAIL;
+  message.subject =      subjectText;
+  message.addRecipient("GPSAtom", "gpsm5stack@gmail.com");
+  message.text.content = "This is simple plain text message";
+  message.text.content = messageText;
+
+  SMTP_Attachment att;
+  att.descr.filename = file_attachment.c_str()+1;
+  att.descr.mime = file_attachment.c_str()+1;
+  att.file.path = file_attachment.c_str();
+  att.file.storage_type = esp_mail_file_storage_type_sd; // from SD
+  att.descr.transfer_encoding = Content_Transfer_Encoding::enc_base64;
+  message.addInlineImage(att);
+
+  message.priority = esp_mail_smtp_priority::esp_mail_smtp_priority_high;
+  message.response.notify = esp_mail_smtp_notify_success | esp_mail_smtp_notify_failure | esp_mail_smtp_notify_delay;
+
+  // Connect to server with the session config
+  // if (!smtp.connect(&session))
+  // {
+  //   dbg("Atom: Can not connect to the server: %s\n", smtp.errorReason().c_str());
+  //   smtp.closeSession();
+  //   return -1;
+  // }
+  for (int i=0;i<=nmax;i++)
+  {
+      ret = smtp.connect(&session);
+      if (ret == 1) break;
+      if ( (ret==0) and (i<=nmax-1)){
+          dbg("Atom: Can not connect to the server: %s\n", smtp.errorReason().c_str());
+          dbg("waitig 3 seconds...");
+          sleep(3);
+          dbg("and try again!\n");
+      }
+  }
+
+  if (ret)
+  {
+    dbg("Atom: SMTP Connected OK\n");
+    }
+  else
+  {
+    dbg("Atom:  SMTP Connect Error: %s.\n", smtp.errorReason().c_str());
+    ret = -1;
+    return ret;
+  }
+
+  // Start sending Email and close the session
+  // ret = MailClient.sendMail(&smtp, &message);
+  for (int i=0;i<=nmax;i++)
+  {
+      ret = MailClient.sendMail(&smtp, &message);
+      if (ret) break;
+      if ( (ret!=true) and (i<=nmax-1)){
+          dbg("Atom: Email send is failed :( Let's try again!\n");
+          sleep(3);
+      }
+  }
+  if (ret)
+  {
+    dbg("Atom: Email sent successfully\n");
+    ret = 0;
+  }
+  else
+  {
+    dbg("Atom: Error sending Email, %s.\n", smtp.errorReason().c_str());
+    ret = -1;
+  }
+
+  smtp.closeSession();
+
+  return ret;
+}
+
+// Callback function to get the Email sending status
+void smtpCallback(SMTP_Status status)
+{
+  // Print the current status
+  Serial.println(status.info());
+
+  // Print the sending result
+  if (status.success())
+  {
+    Serial.println("----------------");
+    Serial.printf("Message sent success: %d\n", status.completedCount());
+    Serial.printf("Message sent failled: %d\n", status.failedCount());
+    Serial.println("----------------\n");
+    struct tm dt;
+
+    for (size_t i = 0; i < smtp.sendingResult.size(); i++)
+    {
+      // Get the result item
+      SMTP_Result result = smtp.sendingResult.getItem(i);
+      localtime_r(&result.timesstamp, &dt);
+
+      Serial.printf("Message No: %d\n", i + 1);
+      Serial.printf("Status: %s\n", result.completed ? "success" : "failed");
+      Serial.printf("Date/Time: %d/%d/%d %d:%d:%d\n", dt.tm_year + 1900, dt.tm_mon + 1, dt.tm_mday, dt.tm_hour, dt.tm_min, dt.tm_sec);
+      Serial.printf("Recipient: %s\n", result.recipients);
+      Serial.printf("Subject: %s\n", result.subject);
+    }
+    Serial.println("----------------\n");
+  }
+}
 //---------------------- HTTP Server ---------------------------------------
 
 void printDirectory(File dir, int numTabs) {
