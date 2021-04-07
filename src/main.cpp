@@ -51,10 +51,10 @@ TinyGPSPlus gps;                                              // Reference the T
 HardwareSerial GPSRaw(2);                                     // By default, GPS is connected with M5Core through UART2
 
 #ifdef GPSFIRE
-// #include <Adafruit_NeoPixel.h>
-// #define M5STACK_FIRE_NEO_NUM_LEDS 10
-// #define M5STACK_FIRE_NEO_DATA_PIN 15
-// Adafruit_NeoPixel pixels = Adafruit_NeoPixel(M5STACK_FIRE_NEO_NUM_LEDS, M5STACK_FIRE_NEO_DATA_PIN, NEO_GRB + NEO_KHZ800);
+#include <Adafruit_NeoPixel.h>
+#define M5STACK_FIRE_NEO_NUM_LEDS 10
+#define M5STACK_FIRE_NEO_DATA_PIN 15
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(M5STACK_FIRE_NEO_NUM_LEDS, M5STACK_FIRE_NEO_DATA_PIN, NEO_GRB + NEO_KHZ800);
 #endif
 
 // GPX track file
@@ -67,6 +67,10 @@ boolean gpx_file_started=false;
 TaskHandle_t Task0GPS;
 TaskHandle_t Task1HTTP;
 TaskHandle_t Task1WifiClient;
+
+//http://www.iotsharing.com/2017/06/how-to-use-binary-semaphore-mutex-counting-semaphore-resource-management.html
+SemaphoreHandle_t SDSemaphore;
+SemaphoreHandle_t LCDSemaphore;
 
 void loadConfiguration(const char *filename, ConfigParam &config);
 void TaskGPS( void * pvParameters );
@@ -112,9 +116,9 @@ int SDCardInit()
 
     dbg("OK\n");
     FastLED.setBrightness(1);
-    white();
 #endif
 
+    white();
     return 0;
 }
 
@@ -134,9 +138,10 @@ int syncMailAndSDFiles()
     String file_size;
 
     // Get SD *.gpx file list.
-    File dir = SD.open("/");
     dbg("-------------------------\n");
     dbg("SD file list:\n");
+    xSemaphoreTake(SDSemaphore, 0);
+    File dir = SD.open("/");
     while (true)
     {
         File entry = dir.openNextFile();
@@ -152,9 +157,12 @@ int syncMailAndSDFiles()
         sd_tracks[entry.name()] = entry.size();
         entry.close();
     }
+    dir.close();
+    xSemaphoreGive(SDSemaphore);
     dbg("-------------------------\n");
 
     // Read  CSV file with previus sync results
+    xSemaphoreTake(SDSemaphore, 0);
     csv_file  = SD.open("/sync.csv", FILE_READ);
     if (csv_file)
     {
@@ -173,6 +181,7 @@ int syncMailAndSDFiles()
     {
         dbg("Error: can not open file to read: sync.csv\n");
     }
+    xSemaphoreGive(SDSemaphore);
 
     // Check unsynchronized files and send emails
     String sd_file;
@@ -211,6 +220,7 @@ int syncMailAndSDFiles()
 
     // Update CSV file
     dbg("Update sync.csv\n");
+    xSemaphoreTake(SDSemaphore, 0);
     csv_file  = SD.open("/sync.csv", FILE_WRITE);
     it = csv_tracks.begin();
     for (int i = 0; it != csv_tracks.end(); it++, i++) {
@@ -219,20 +229,26 @@ int syncMailAndSDFiles()
         csv_file.printf("%s, %d\n", it->first.c_str(), it->second);
     }
     csv_file.close();
+    xSemaphoreGive(SDSemaphore);
 
     return ret;
 }
 
 void setup()
 {
+    SDSemaphore = xSemaphoreCreateMutex();
+    LCDSemaphore = xSemaphoreCreateMutex();
+
 #ifdef GPSFIRE
     M5.begin();                                    // Start M5 functions
     GPSRaw.begin(9600);                            // Init GPS serial interface
     //M5.Lcd.setBrightness(LCD_BRIGHTNESS - 200);    // Set initial LCD brightness
+    delay(1000); 
     // pixels.begin();
+    // pixels.setPixelColor(0, pixels.Color(255, 255, 255));     
+    // pixels.show();
 #endif
-
-#ifdef M5ATOM
+#ifdef GPSATOM
     M5.begin(true,false,true); 
     GPSRaw.begin(9600,SERIAL_8N1,22,-1);           // Init GPS serial interface 
 #endif
@@ -350,7 +366,8 @@ void TaskWifiClient( void * pvParameters )
 #endif
         {
             blue_on();
-            ret = initWifiClient(config.wifi_ssid, config.wifi_ssid_password);
+            ret = initWifiClient(WORK_SSID, WORK_SSID_PASS);
+            // ret = initWifiClient(config.wifi_ssid, config.wifi_ssid_password);
             if (ret!=CLIENT_WIFI_CONNECTED)
             {
                 ret = initWifiClient(HOME_SSID, HOME_SSID_PASS);
@@ -691,6 +708,7 @@ void GPXFileInit()
 void GPXFileSaveTrack(String gpx_point)
 {
     if (gpx_file_started){
+        xSemaphoreTake(SDSemaphore, 0);
         File gpxTrackFile;
         gpxTrackFile = SD.open(gpxTrackFileName, "w+");
         unsigned long filesize = gpxTrackFile.size();
@@ -699,5 +717,6 @@ void GPXFileSaveTrack(String gpx_point)
         gpxTrackFile.print(gpx_point + GPX_TRACK_TAIL);
         gpxTrackFile.flush();
         gpxTrackFile.close();
+        xSemaphoreGive(SDSemaphore);
     }
 }

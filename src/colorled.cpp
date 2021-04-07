@@ -50,34 +50,69 @@ void white()
     M5.dis.drawpix(0, led);
 }
 #else
-#include <Adafruit_NeoPixel.h>
+// #include <Adafruit_NeoPixel.h>
+// #define M5STACK_FIRE_NEO_NUM_LEDS 10
+// #define M5STACK_FIRE_NEO_DATA_PIN 15
+// extern Adafruit_NeoPixel pixels;
 
-#define M5STACK_FIRE_NEO_NUM_LEDS 10
-#define M5STACK_FIRE_NEO_DATA_PIN 15
-
-extern Adafruit_NeoPixel pixels;
+extern SemaphoreHandle_t LCDSemaphore;
 
 static bool blue_st= false;
+bool skipp = false;
 
-void red(){};
-void green(){};
-void blue(){};
+void red()
+{
+    if (skipp) return;
+    if (blue_st) return;
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
+    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, RED);
+    xSemaphoreGive(LCDSemaphore);
+    }
+};
+void green()
+{
+    if (skipp) return;
+    if (blue_st) return;
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
+    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, GREEN);
+    xSemaphoreGive(LCDSemaphore);
+    }
+
+};
+void blue()
+{
+    if (skipp) return;
+    blue_st = true;
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
+    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, BLUE);
+    xSemaphoreGive(LCDSemaphore);
+    }
+};
 void white()
 {
-    // if (blue_st) return;
-    // pixels.setPixelColor(1, pixels.Color(255, 255, 255));     
-    // pixels.show();    
+    if (skipp) return;
+    if (blue_st) return;
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
+    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, WHITE);
+    xSemaphoreGive(LCDSemaphore);
+    }
 };
 void blue_on()
 {
-    // blue_st = true;
-    // pixels.setPixelColor(1, pixels.Color(0, 0, 255));     
-    // pixels.show();
+    if (skipp) return;
+    blue_st = true;
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
+    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, BLUE);
+    xSemaphoreGive(LCDSemaphore);
+    }
 };
-void blue_off()
+void blue_off(bool st=false)
 {
-    // blue_st = false;
-    // pixels.setPixelColor(1, pixels.Color(0, 0, 0));     
-    // pixels.show();    
+    if (skipp) return;
+    blue_st = st;
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
+    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, BLACK);
+    xSemaphoreGive(LCDSemaphore);
+    }
 };
 #endif

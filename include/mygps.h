@@ -2,7 +2,7 @@
 #define MYGPS_h
 
 #define GPSFIRE
-//#define GPSATOM
+// #define GPSATOM
 
 #ifdef GPSFIRE
 #include <M5Stack.h>
