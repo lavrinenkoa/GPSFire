@@ -19,7 +19,7 @@ void smtpCallback(SMTP_Status status);  //  Callback function to get the Email s
 //------------------- Wi-Fi Server --------------------
 extern ConfigParam config;   // Access Point credentials
 extern SemaphoreHandle_t SDSemaphore;
-extern SemaphoreHandle_t LCDSemaphore;
+#define SEMAPHORE_TICK ( 5 )
 
 DNSServer dnsServer;
 WiFiServer server(80);
@@ -139,9 +139,11 @@ int sendEmail(String file_attachment)
   att.file.path = file_attachment.c_str();
   att.file.storage_type = esp_mail_file_storage_type_sd; // from SD
   att.descr.transfer_encoding = Content_Transfer_Encoding::enc_base64;
-  xSemaphoreTake(SDSemaphore, 0);
-  message.addInlineImage(att); // addAttachment
-  xSemaphoreGive(SDSemaphore);
+  if ( xSemaphoreTake(SDSemaphore, ( TickType_t ) SEMAPHORE_TICK ) == pdTRUE )
+  {
+    message.addInlineImage(att); // addAttachment
+    xSemaphoreGive(SDSemaphore);
+  }
 
   message.priority = esp_mail_smtp_priority::esp_mail_smtp_priority_high;
   message.response.notify = esp_mail_smtp_notify_success | esp_mail_smtp_notify_failure | esp_mail_smtp_notify_delay;
@@ -155,9 +157,11 @@ int sendEmail(String file_attachment)
   // }
   for (int i=0;i<=nmax;i++)
   {
-      xSemaphoreTake(LCDSemaphore, 0);
-      ret = smtp.connect(&session);
-      xSemaphoreGive(LCDSemaphore);
+      if ( xSemaphoreTake(SDSemaphore, ( TickType_t ) SEMAPHORE_TICK ) == pdTRUE )
+      {
+        ret = smtp.connect(&session);
+        xSemaphoreGive(SDSemaphore);
+      }
       if (ret == 1) break;
       if ( (ret==0) and (i<=nmax-1)){
           dbg("Atom: Can not connect to the server: %s\n", smtp.errorReason().c_str());
@@ -182,9 +186,11 @@ int sendEmail(String file_attachment)
   // ret = MailClient.sendMail(&smtp, &message);
   for (int i=0;i<=nmax;i++)
   {
-      xSemaphoreTake(LCDSemaphore, 0);
-      ret = MailClient.sendMail(&smtp, &message);
-      xSemaphoreGive(LCDSemaphore);
+      if ( xSemaphoreTake(SDSemaphore, ( TickType_t ) SEMAPHORE_TICK ) == pdTRUE )
+      {
+        ret = MailClient.sendMail(&smtp, &message);
+        xSemaphoreGive(SDSemaphore);
+      }
 
       if (ret) break;
       if ( (ret!=true) and (i<=nmax-1)){

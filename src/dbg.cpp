@@ -24,7 +24,7 @@ void dbg(const char* format, ...)
 
 #ifdef GPSFIRE
     // xSemaphoreTake(LCDSemaphore, 0);
-    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE )
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 15 ) == pdTRUE )
     {
         if ( lcdLine%LCD_MAX_LOG_LINE == 0 )
         {
@@ -40,12 +40,13 @@ void dbg(const char* format, ...)
 
 #endif
     Serial.printf(tmp);
-    xSemaphoreTake(SDSemaphore, 0);
-    logFile = SD.open(DBG_FILE_TXT, "a+");
-    logFile.printf(tmp);
-    logFile.flush();
-    logFile.close();
-    xSemaphoreGive(SDSemaphore);
+    if ( xSemaphoreTake( SDSemaphore, ( TickType_t ) 15 ) == pdTRUE ){
+        logFile = SD.open(DBG_FILE_TXT, "a+");
+        logFile.printf(tmp);
+        logFile.flush();
+        logFile.close();
+        xSemaphoreGive(SDSemaphore);
+    }
 
 }
 

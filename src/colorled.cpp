@@ -60,59 +60,49 @@ extern SemaphoreHandle_t LCDSemaphore;
 static bool blue_st= false;
 bool skipp = false;
 
+void lsdLED(uint32_t color)
+{
+    // return;
+    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 15 ) == pdTRUE ){
+        M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, color);
+        xSemaphoreGive(LCDSemaphore);
+    }
+}
+
 void red()
 {
     if (skipp) return;
     if (blue_st) return;
-    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
-    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, RED);
-    xSemaphoreGive(LCDSemaphore);
-    }
-};
+    lsdLED(RED);
+}
+
 void green()
 {
     if (skipp) return;
     if (blue_st) return;
-    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
-    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, GREEN);
-    xSemaphoreGive(LCDSemaphore);
-    }
-
-};
+    lsdLED(GREEN);
+}
 void blue()
 {
     if (skipp) return;
     blue_st = true;
-    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
-    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, BLUE);
-    xSemaphoreGive(LCDSemaphore);
-    }
-};
+}
 void white()
 {
     if (skipp) return;
     if (blue_st) return;
-    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
-    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, WHITE);
-    xSemaphoreGive(LCDSemaphore);
-    }
-};
+    lsdLED(WHITE);
+}
 void blue_on()
 {
     if (skipp) return;
     blue_st = true;
-    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
-    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, BLUE);
-    xSemaphoreGive(LCDSemaphore);
-    }
-};
+    lsdLED(BLUE);
+}
 void blue_off(bool st=false)
 {
     if (skipp) return;
     blue_st = st;
-    if ( xSemaphoreTake( LCDSemaphore, ( TickType_t ) 50 ) == pdTRUE ){
-    M5.Lcd.fillRect(0, M5.Lcd.height()-20, M5.Lcd.width(), 20, BLACK);
-    xSemaphoreGive(LCDSemaphore);
-    }
-};
+    lsdLED(BLACK);
+}
 #endif
